@@ -1,11 +1,11 @@
-FROM ubuntu:latest
+FROM ubuntu:latest AS sandrun_builder
 WORKDIR /srv
 RUN apt-get update && apt-get install -y build-essential && apt-get clean autoclean && apt-get autoremove --yes
 
 COPY ./netrun /srv/netrun
 RUN cd netrun/serve/sandrun_export && make
 
-FROM ubuntu/apache2:latest
+FROM ubuntu/apache2:latest AS frontend
 WORKDIR /srv
 
 # Install perl cgi and openssl
@@ -24,10 +24,14 @@ COPY ./resources/apache.conf /etc/apache2/sites-available/000-default.conf
 COPY ./www /srv/www
 COPY ./netrun /srv/netrun
 
-COPY --from=0 /srv/netrun/serve/sandrun_export/sandsend netrun/bin/sandsend
+COPY --from=sandrun_builder /srv/netrun/serve/sandrun_export/sandsend netrun/bin/sandsend
 # Create needed directory scaffolding
 RUN mkdir netrun/pwreset
+RUN mkdir netrun/run
 RUN touch netrun/.htpasswd
 
+RUN echo "katlyn:\$apr1\$xybajp09\$7AqhaoixbOSJV6HYa35gF." > netrun/.htpasswd
+
 # Update permissions
-RUN chown -R www-data:www-data /srv
+RUN chown -R www-data:www-data /srv/netrun/run
+RUN chmod -R 777 /srv/www

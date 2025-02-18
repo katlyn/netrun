@@ -1,0 +1,14 @@
+services:
+  web:
+    build:
+      dockerfile: resources/frontend.Dockerfile
+      context: .
+    ports:
+      - "8080:80"
+      - "4443:443"
+
+  runner:
+    hostname: skylake
+    build:
+      dockerfile: resources/runner.Dockerfile
+      context: .
