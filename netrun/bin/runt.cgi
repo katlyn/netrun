@@ -768,6 +768,7 @@ END_ACE
 			'C++14',
 			'C++17',
 			'C',
+			'Swift',
 			'Rust',
 			'Assembly-NASM',
 			'Assembly',			
@@ -847,6 +848,7 @@ END_ACE
 			#	'Alpha',
 				'ARM',
 				'ARMpi4',
+				'RISCV',
 			#	'SPARC',
 			#	'MIPS',
 			#	'PPC',
@@ -871,6 +873,7 @@ END_ACE
 			#	'Alpha' => 'DEC Alpha (NetBSD)',
 				'ARM' => 'ARM (Raspberry Pi 3)',
 				'ARMpi4' => 'ARM64 (Pi 4)',
+				'RISCV' => 'RISC-V (VisionFive 2)',
 			#	'SPARC' => 'SPARC (Sun Ultra5 Linux)',
 			#	'MIPS' => 'MIPS (SGI IRIX)',
 			#	'PPC' => 'PowerPC (OS X)',
@@ -882,7 +885,7 @@ END_ACE
 	print
 		"<p>Compile options:",
 		$q->checkbox_group(-name=>'ocompile',
-			-values=>['TraceASM','Optimize','Debug','Warnings','Verbose'],
+			-values=>['TraceASM','Optimize','Debug','Warnings','Verbose','Execstack'],
 			-defaults=>['Optimize','Warnings']),"<br>\n";
 
 	print
@@ -905,7 +908,7 @@ END_ACE
 	}
 
 	print "<hr>";
-	print "Version 2022-09-04 Highlight";
+	print "Version 2024-10-22 Removed Disqus (privacy leak)";
 	print "</div>";
 
 	if ($rel_url eq "runh") { # Homework prep: store correct inputs and outputs
@@ -959,31 +962,12 @@ sub compile_and_run {
 	#	print $res;
 	# }
 
-	# Check for grading-OK message:
+	# Check for grading-OK message (FIXME: multi-submit race condition here!)
 	my $hwnum = checkhwnum();
 	if ( $hwnum && $res =~ m/GRADEVAL="@<YES!>&">/ ) {
 		my $hw_und=slash_to_underscore($hwnum);
 		journal("hwok $hw_und");
 		system("cp","$proj->{src}","hw/$hw_und");
-		
-		if ($rel_url ne "runa") { 
-	
-			print '<p>Now that you\'ve solved it, feel free to discuss the issues in this homework here:
-    <div id="disqus_thread"></div>
-    <script type="text/javascript">
-        /* * * CONFIGURATION VARIABLES: EDIT BEFORE PASTING INTO YOUR WEBPAGE * * */
-        var disqus_shortname = "netrun"; // required: replace example with your forum shortname
-	var disqus_url = "https://lawlor.cs.uaf.edu/netrun/run?hw='.$hwnum.'";
-        (function() {
-            var dsq = document.createElement("script"); dsq.type = "text/javascript"; dsq.async = true;
-            dsq.src = "//" + disqus_shortname + ".disqus.com/embed.js";
-            (document.getElementsByTagName("head")[0] || document.getElementsByTagName("body")[0]).appendChild(dsq);
-        })();
-    </script>
-    <noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
-    <a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
-';
-		}
 	}
 }
 
@@ -1157,7 +1141,53 @@ sub create_project_directory {
 
 ###############################################	
 # Language switch
-	if ( $lang eq "Rust") {
+	if ( $lang eq "Swift") {
+		@cflags=();
+		push(@cflags,"-I platform/swift ");
+		if (grep(/^Optimize$/, @ocompile)==1) {push(@cflags,"-O");}
+		@lflags=@cflags;
+
+		$compiler='swiftc -emit-object -parse-as-library  -module-name NetRun  $(CFLAGS) ';
+		$linker="swiftc ";
+
+		$main="platform/swift/NetRun/NetRun.swift platform/swift/main.swift ";
+		$srcext="swift";
+		# $netrun="netrun/swift";
+		
+		my $src="project/platform/swift/foo/foo.h";
+		open(SRC,">$src") or err("Cannot create source file $src");
+		print SRC "#define NETRUN_FOO_DECL $proto\n";
+		print SRC "NETRUN_FOO_DECL;\n";
+		close(SRC);
+
+		my $swarg = "";
+		if ($arg0 eq "int" or $arg0 eq "long") { $swarg = "_ bar : Int"; }
+		elsif ($arg0 eq "std::string") { $swarg = "_ bar : String"; }
+		elsif ($arg0 eq "float") { $swarg = "_ bar : Float"; }
+		elsif ($arg0 eq "double") { $swarg = "_ bar : Double"; }
+		elsif ($arg0 eq "void") { $swarg = ""; }
+		else { print("Ignoring argument type $arg0<br>"); }
+		
+		my $swret = "";
+		if ($ret eq "int" or $ret eq "long") { $swret = "-> Int"; }
+		elsif ($ret eq "std::string") { $swret = "-> String"; }
+		elsif ($ret eq "float") { $swret = "-> Float"; }
+		elsif ($ret eq "double") { $swret = "-> Double"; }
+		elsif ($ret eq "sse_float4") { $swret = "-> simd_float4"; }
+		elsif ($ret eq "void") { $swret = ""; }
+		else { print("Ignoring return type $ret<br>"); }
+		
+		$srcpre = $gradecode;
+		if ($mode eq 'frag') { # Function fragment
+			$srcpre=$srcpre . "import Foundation\n";
+			$srcpre=$srcpre . '@_cdecl("foo")' . "\npublic func foo($swarg) $swret {\n";
+			$srcpost .= "}\n" . $gradepost;
+
+		#	$srcpost = "\n";
+		#	$srcpost .= $gradepost;
+		}
+	}
+	elsif ( $lang eq "Rust") {
 		$compiler="echo ";
 		$linker="echo ";
 		$srcext="rs";
@@ -1173,7 +1203,7 @@ sub create_project_directory {
 		$compiler='g++ $(CFLAGS)';
 		if ($lang ne "CUDA" ) {
 			push(@cflags,"-fopenmp"); # accept pragma omp by default
-			if (substr($mach,0,3) ne "ARM") {
+			if (substr($mach,0,3) ne "ARM" and substr($mach,0,4) ne "RISC") {
 				push(@cflags,"-fcf-protection=none"); # avoid "endbr64" noise on x86 (new gcc default)
 			}
 		}
@@ -1277,6 +1307,7 @@ using std::cin;
 .globl foo
 .type foo,@function
 ';
+
 		if ($mode eq 'frag') { # Subroutine fragment
 			$srcpre .="\nfoo:\n";
 			$srcpost=$gradepost . "\nret";
@@ -1305,9 +1336,6 @@ global foo
 
 		# Add macro if we're doing TraceASM
 		if (grep(/^TraceASM$/, @ocompile)==1) {
-			# Start with canary version of user code?
-			#   (to pick up assembler errors only, but causes errors on label use)
-			#  $srcpre=$code . 
 			$srcpre = '
 
 ; TraceASM support code:
@@ -1439,59 +1467,7 @@ section .text
 %endmacro
 ' . $srcpre;
 
-			# Add TraceASM macro calls to each line of the code
-			#  FIXME: don't trace section, data, strings, globals, etc.
-			#   and trim comments.
-			my $newcode = ""; # "TraceASM 0,\"Startup\",\"\"\n\n";
-			my $lastline = "";
-			my $lastlineno = 0;
-			my $lineno=0;
-			for my $line (split /^/, $code) {
-				$lineno+=1;
-				chomp($line); # trim newline
-
-				# Save original code:
-				my $nextcode = "$line\n";
-				
-				if ($line =~ /^([^;]*);.*/) { 
-					$line=$1; # strip comments
-				}
-				if ($line =~ /^\s*[a-zA-Z0-9_]*\s*:(.*)/) { 
-					# $line=$1; # strip labels
-				}
-				my $skip = 0;
-				if ($line =~ /section /i) {
-					$skip=1; # skip section markers
-				}
-				if ($line =~ /times /i) {
-					$skip=1; # skip repeated stuff
-				}
-				if ($line =~ /^\s*d[bwdq] /i) {
-					$skip=1; # skip data declarations
-				}
-				if ($line =~ /['"`]/) {
-					$skip=1; # skip lines with quote chars
-				}				
-				if ($line =~ /^\s*$/) {
-					$skip=1; # skip blank lines
-				}
-				
-				if ($skip == 0) 
-				{
-					$newcode .= "TraceASM $lastlineno,'$lastline','$line'\n";
-				}
-				
-				$newcode .= $nextcode;
-				
-				if ($skip == 0) 
-				{
-					$lastline = $line;
-					$lastlineno = $lineno;
-				}
-
-			}
-			$code=$newcode;
-	
+			addTraceASM($code);	
 		}
 
 	}
@@ -1739,14 +1715,24 @@ section .text
 netrun_ran_off_end:
 	mov rdi,netrun_ran_off_end_string
 	extern puts
-	call puts
+	call puts wrt ..plt
 	mov rax,0
 	ret ; added by netrun
 
 section .data
 netrun_ran_off_end_string: db "Your assembly needs a ret at the end."
 section .text
-			' . $gradepost;
+';
+			if (grep(/^Execstack$/, @ocompile)!=1) {
+				$srcpost = $srcpost . '
+				; Linux needs this to make the stack not be executable:
+				section .note.GNU-stack noalloc noexec nowrite progbits
+section .text
+
+';
+			}
+
+			$srcpost = $srcpost . $gradepost;
 		}
 		if ( $lang eq "C" || $lang eq "C++" || $lang eq "C++0x" || $lang eq "C++14" || $lang eq "C++17" || $lang eq "OpenMP" ) { push(@cflags,"-no-pie -msse4.2 -mavx2 -msse2avx"); }
 		if ($lang eq "OpenMP") {$compiler=$linker='g++ -fopenmp $(CFLAGS)';}
@@ -1841,6 +1827,191 @@ section .text
 		}
 		$disassembler="objdump -drC";   # -M freaks out this version
 		if ( $lang eq "Assembly") { ################# GNU Assembly
+			$srcpre='
+.text
+'. $gradecode .'
+.global foo
+';
+
+		# Add macro if we're doing ARM64 TraceASM
+		# (generated by ChatGPT, then cleaned up with local labels)
+		# This version trimmed to only save q0..q7
+		if (grep(/^TraceASM$/, @ocompile)==1) {
+			$srcpre = '
+.section .bss
+    .balign 32
+    .global TraceASM_state
+TraceASM_state:
+    /* General regs area: x0..x30, sp slot (32 * 8 = 256 bytes) */
+    .skip 256
+    /* Vector regs area: v0..v31 (32 * 16 = 512 bytes) */
+    .skip 512
+TraceASM_state_flags:
+    .skip 8          /* one 8-byte slot for NZCV */
+TraceASM_state_end:
+
+    .balign 16
+    .global TraceASM_stack
+TraceASM_stack:
+    /* match your x86 size: resq 1024*1024 => 1024*1024 qwords -> 8,388,608 bytes (8 MiB) */
+    .skip 8388608
+TraceASM_stack_end:
+    .text
+    .p2align 4
+
+.altmacro
+
+/* Macro: TraceASM line, code-string, next-code-string */
+    .macro TraceASM line, code, codenext
+LOCAL Lcodestring, Lcodestring_next
+
+    /* Compute base address of TraceASM_state into x16 */
+    adrp    x16, TraceASM_state
+    add     x16, x16, :lo12:TraceASM_state
+
+    /* ---------- Save general registers x0..x30 and SP ---------- */
+    /* store 8-byte slots at offsets 0,8,16,... */
+    /* x0..x30 (31 regs) */
+    stp     x0,  x1,  [x16, #0]        /* offset 0 */
+    stp     x2,  x3,  [x16, #16]       /* offset 16 */
+    stp     x4,  x5,  [x16, #32]
+    stp     x6,  x7,  [x16, #48]
+    stp     x8,  x9,  [x16, #64]       
+    stp     x10, x11, [x16, #80]
+    stp     x12, x13, [x16, #96]
+    stp     x14, x15, [x16, #112]
+    stp     x16, x17, [x16, #128]    /* note: saves new x16 */
+    stp     x18, x19, [x16, #144]
+    stp     x20, x21, [x16, #160]
+    stp     x22, x23, [x16, #176]
+    stp     x24, x25, [x16, #192]
+    stp     x26, x27, [x16, #208]
+    stp     x28, x29, [x16, #224]
+    str     x30,        [x16, #240]   /* x30 (LR) at offset 240 */
+    /* store SP into offset 248 */
+    mov     x10, sp
+    str     x10,        [x16, #248]
+
+    /* ---------- Save vector registers v0..v31 (q0..q31, 128-bit each) ---------- */
+    /* vector base offset = 256 */
+    /* use q-register stores: str qN, [x16, #offset] */
+    str     q0,  [x16, #256]
+    str     q1,  [x16, #272]
+    str     q2,  [x16, #288]
+    str     q3,  [x16, #304]
+    str     q4,  [x16, #320]
+    str     q5,  [x16, #336]
+    str     q6,  [x16, #352]
+    str     q7,  [x16, #368]
+
+    /* ---------- Save flags (NZCV) ---------- */
+    mrs     x11, nzcv
+    str     x11, [x16, #768]     /* flags at offset 768 */
+
+    /* ---------- Switch to tracer stack ---------- */
+    adrp    x12, TraceASM_stack_end
+    add     x12, x12, :lo12:TraceASM_stack_end
+    mov     sp, x12
+
+    /* ---------- Prepare arguments and call TraceASM_cside ---------- */
+    /* x0: line number
+       x1: pointer to code-string
+       x2: pointer to TraceASM_state
+       x3: size of state (TraceASM_state_end - TraceASM_state)
+       x4: pointer to code-next-string
+    */
+    mov     x0, \line
+
+    /* codestring addr */
+    adrp    x13, Lcodestring
+    add     x13, x13, :lo12:Lcodestring
+    mov     x1, x13
+
+    /* state pointer */
+    mov     x2, x16
+
+    /* compute state size into x3: x3 = TraceASM_state_end - TraceASM_state */
+    adrp    x14, TraceASM_state_end
+    add     x14, x14, :lo12:TraceASM_state_end
+    sub     x3, x14, x16
+
+    /* codestring_next */
+    adrp    x15, Lcodestring_next
+    add     x15, x15, :lo12:Lcodestring_next
+    mov     x4, x15
+
+    /* call C helper */
+    bl      TraceASM_cside
+
+.section .rodata
+    /* put the string constants in the text/rodata area (unique per macro invocation) */
+Lcodestring: .asciz \code
+Lcodestring_next: .asciz \codenext
+.text
+
+    /* ---------- Restore flags and registers from saved state ---------- */
+    /* base address again in x16 */
+    adrp    x16, TraceASM_state
+    add     x16, x16, :lo12:TraceASM_state
+
+    /* restore NZCV */
+    ldr     x11, [x16, #768]
+    msr     nzcv, x11
+
+    /* restore vectors (q0..q31) */
+    ldr     q0,  [x16, #256]
+    ldr     q1,  [x16, #272]
+    ldr     q2,  [x16, #288]
+    ldr     q3,  [x16, #304]
+    ldr     q4,  [x16, #320]
+    ldr     q5,  [x16, #336]
+    ldr     q6,  [x16, #352]
+    ldr     q7,  [x16, #368]
+
+    /* restore general registers x0..x30 and SP.
+       load using ldp pairs */
+    ldp     x0,  x1,  [x16, #0]
+    ldp     x2,  x3,  [x16, #16]
+    ldp     x4,  x5,  [x16, #32]
+    ldp     x6,  x7,  [x16, #48]
+    ldp     x8,  x9,  [x16, #64]  
+    ldp     x10, x11, [x16, #80]
+    ldp     x12, x13, [x16, #96]
+    ldp     x14, x15, [x16, #112]
+    ldp     x16, x17, [x16, #128]  /* this will clobber x16 with saved value */
+    ldp     x18, x19, [x16, #144]
+    ldp     x20, x21, [x16, #160]
+    ldp     x22, x23, [x16, #176]
+    ldp     x24, x25, [x16, #192]
+    ldp     x26, x27, [x16, #208]
+    ldp     x28, x29, [x16, #224]
+    ldr     x30,       [x16, #240]
+    ldr     x10,       [x16, #248]
+    mov     sp, x10
+
+    /* done; fall through to the next instruction (no explicit jump) */
+    .endm
+
+' . $srcpre;
+				addTraceASM($code);
+			}
+
+
+			if ($mode eq 'frag') { # Subroutine fragment
+				$srcpre .="\nfoo:\n";
+				$srcpost='ret'; 		
+			}
+		}
+	} elsif ( $mach eq "RISCV" ) {
+	print "FYI-- This is a VisionFive 2 (JH7110) RV64GC<br>\n";
+		$sr_host="starfive";
+		$sr_port=2983;
+		push(@cflags,"-fopenmp");
+		if ( $lang eq "Assembly") {
+			$compiler="as "; 
+		}
+		$disassembler="objdump -drC";   # -M freaks out this version
+		if ( $lang eq "Assembly") { ###### GNU Assembly
 			$srcpre='
 .text
 '. $gradecode .'
@@ -2045,6 +2216,70 @@ include Makefile.post
 }
 
 ################ Utility Routines
+
+# Usage: call it to add TraceASM macro invocations to each line of assembly code.
+sub addTraceASM {
+	my $code = $_[0];
+	
+	# Add TraceASM macro calls to each line of the code
+	#  FIXME: don't trace section, data, strings, globals, etc.
+	#   and trim comments.
+	my $newcode = ""; # "TraceASM 0,\"Startup\",\"\"\n\n";
+	my $lastline = "";
+	my $lastlineno = 0;
+	my $lineno=0;
+	for my $line (split /^/, $code) {
+		$lineno+=1;
+		chomp($line); # trim newline
+
+		# Save original code:
+		my $nextcode = "$line\n";
+		
+		if ($line =~ /^([^;]*);.*/) { 
+			$line=$1; # strip comments
+		}
+		if ($line =~ /^([^\/]*)\/\/.*/) { 
+			$line=$1; # strip comments
+		}
+		if ($line =~ /^\s*[a-zA-Z0-9_]*\s*:(.*)/) { 
+			# $line=$1; # strip labels
+		}
+		my $skip = 0;
+		if ($line =~ /section /i) {
+			$skip=1; # skip section markers
+		}
+		if ($line =~ /[.]/i) {
+			$skip=1; # skip dotted stuff
+		}
+		if ($line =~ /times /i) {
+			$skip=1; # skip repeated stuff
+		}
+		if ($line =~ /^\s*d[bwdq] /i) {
+			$skip=1; # skip data declarations
+		}
+		if ($line =~ /['"`]/) {
+			$skip=1; # skip lines with quote chars
+		}				
+		if ($line =~ /^\s*$/) {
+			$skip=1; # skip blank lines
+		}
+		
+		if ($skip == 0) 
+		{
+			$newcode .= "TraceASM $lastlineno,\"$lastline\",\"$line\"\n";
+		}
+		
+		$newcode .= $nextcode;
+		
+		if ($skip == 0) 
+		{
+			$lastline = $line;
+			$lastlineno = $lineno;
+		}
+
+	}
+	$_[0] = $newcode;
+}
 
 # Usage: separate_text_binary(input_text_and_binary,output_just_binary)
 sub separate_text_binary {
